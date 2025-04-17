@@ -28,7 +28,7 @@ pub const Header = packed struct {
     target: u64 = 0,
     _r1: u48 = 0,
     _r2: u6 = 0,
-    ack_required: bool = false,
+    ack_required: bool = true,
     res_required: bool = false,
     sequence: u8 = 0,
     _r3: u64 = 0,
@@ -138,7 +138,6 @@ pub fn target(self: Self) *const [6]u8 {
 
 pub fn setTarget(self: *Self, new_target: []const u8) void {
     self.header.target = std.mem.readInt(u48, new_target[0..6], .little);
-    // self.header.target = @as(u48, @bitCast(new_target[0..6].*));
 }
 
 /// Wrap around message sequence number
@@ -169,7 +168,6 @@ test "parse packet header" {
     const test_packet = .{ 68, 0, 0, 20, 235, 185, 233, 241, 208, 115, 213, 38, 132, 206, 0, 0, 76, 73, 70, 88, 86, 50, 0, 0, 0, 157, 63, 208, 246, 233, 173, 0, 25, 0, 0, 0, 75, 105, 116, 99, 104, 101, 110 };
     std.mem.copyForwards(u8, &buf, &test_packet);
     const packet: Self = try .initBuffer(std.testing.allocator, &buf);
-
     defer packet.deinit(std.testing.allocator);
     const state_label: []const u8 = std.mem.span(@as(
         [*:0]const u8,
@@ -197,10 +195,4 @@ test "create packet" {
     try std.testing.expectEqualSlices(u8, "\xD0\x73\xD5\x26\x84\xCE", packet.target());
     packet.setSource("ABCD");
     try std.testing.expectEqualStrings("ABCD", packet.source());
-    std.debug.print("{any}\n{any}\n{any}\n{s}\n", .{
-        packet,
-        packet.getType(),
-        packet.target(),
-        packet.source(),
-    });
 }

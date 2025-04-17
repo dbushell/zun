@@ -1,47 +1,47 @@
 const std = @import("std");
-const Allocator = std.mem.Allocator;
 const Packet = @import("./Packet.zig");
+
+const Address = std.net.Address;
+const Allocator = std.mem.Allocator;
 
 const Self = @This();
 
+pub const default_target = .{0} ** 6;
+
+addr: Address,
+target: [6]u8 = .{0} ** 6,
 sequence: u8 = 0,
-source: [4]u8 = undefined,
-target: [6]u8 = undefined,
-
-var prng = std.Random.DefaultPrng.init(0);
-var rng = prng.random();
-
-pub fn init() Self {
-    var light = Self{};
-    rng.bytes(&light.source);
-    return light;
-}
 
 pub fn create(self: *Self, allocator: Allocator, packet_type: Packet.Type) !Packet {
     self.sequence +%= 1;
     if (self.sequence == 0) self.sequence += 1;
     var packet: Packet = try .init(allocator);
     packet.setType(packet_type);
-    packet.setSource(&self.source);
     packet.setSequence(self.sequence);
+    // Use device IP as unique client ID
+    packet.setSource(std.mem.asBytes(&self.addr.in.sa.addr));
+    // Add device MAC address target if defined
+    if (!std.mem.eql(u8, &self.target, &default_target)) {
+        packet.setTarget(&self.target);
+    }
     return packet;
 }
 
-test "init light" {
-    const light_1 = Self.init();
-    const light_2 = Self.init();
-    try std.testing.expect(std.mem.eql(
-        u8,
-        &light_1.source,
-        &light_2.source,
-    ) == false);
-}
+// test "init light" {
+//     var light_1: Self = .{ .addr = undefined };
+//     var light_2: Self = .{ .addr = undefined };
+//     try std.testing.expect(std.mem.eql(
+//         u8,
+//         &light_1.source,
+//         &light_2.source,
+//     ) == false);
+// }
 
 test "create packet" {
-    var light = Self.init();
+    var light: Self = .{ .addr = undefined };
     var packet_1 = try light.create(std.testing.allocator, .get_label);
     defer packet_1.deinit(std.testing.allocator);
-    try std.testing.expectEqualSlices(u8, &light.source, packet_1.source());
+    // try std.testing.expectEqualSlices(u8, &light.source, packet_1.source());
     try std.testing.expectEqual(1, packet_1.sequence());
     try std.testing.expectEqual(Packet.Type.get_label, packet_1.getType());
     // Test sequence increment
