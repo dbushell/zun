@@ -3,6 +3,8 @@ const builtin = @import("builtin");
 const lib = @import("zun_lib");
 
 const Packet = @import("./Packet.zig");
+const Light = @import("./Light.zig");
+
 const Allocator = std.mem.Allocator;
 const posix = std.posix;
 
@@ -41,6 +43,7 @@ pub fn main() !void {
         if (std.mem.eql(u8, buf[0..3], "end")) {
             break;
         }
+
         const packet = Packet.initBuffer(arena, buf[0..len]) catch |err| switch (err) {
             error.OutOfMemory => break,
             else => {
@@ -48,7 +51,11 @@ pub fn main() !void {
                 continue;
             },
         };
-        std.debug.print("`{s}`\n", .{packet.buf});
+        std.debug.print("FROM: {any}\nfrom: \"{x}\"\nlength: {d}\n\n", .{
+            packet,
+            packet.target(),
+            packet.size(),
+        });
     }
 }
 
