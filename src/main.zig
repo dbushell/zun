@@ -68,22 +68,45 @@ pub fn main() !void {
         try light.getState(allocator, sockfd);
     }
 
-    var buf: [Packet.max_packet_size]u8 = undefined;
     while (true) {
+        // Read buffer
+        var buf: [Packet.max_packet_size]u8 = undefined;
         var src_addr: std.posix.sockaddr.in align(4) = undefined;
         var addrlen: std.posix.socklen_t = @sizeOf(std.posix.sockaddr.in);
         const len = try posix.recvfrom(sockfd, &buf, 0, @ptrCast(&src_addr), &addrlen);
-        // Magic command
-        if (std.mem.eql(u8, buf[0..3], "end")) {
-            break;
+
+        // Handle commands
+        var iter = std.mem.tokenizeScalar(u8, std.mem.trim(u8, buf[0..len], " \n"), ' ');
+        if (iter.next()) |command| {
+            if (std.mem.eql(u8, command, "end")) {
+                break;
+            }
+            const command_on = std.mem.eql(u8, command, "on");
+            const command_off = std.mem.eql(u8, command, "off");
+            if (command_on or command_off) {
+                if (iter.next()) |label| {
+                    const maybe: ?*Light = blk: {
+                        for (lights.items) |l| if (l.compareLabel(label)) break :blk l;
+                        break :blk null;
+                    };
+                    if (maybe) |light| {
+                        light.setPower(allocator, sockfd, command_on) catch |err| {
+                            std.debug.print("{s}\n", .{@errorName(err)});
+                        };
+                    }
+                }
+                continue;
+            }
         }
+
         // Find known device
         const from = Address.initPosix(@ptrCast(&src_addr));
         const maybe: ?*Light = blk: {
             for (lights.items) |l| if (l.addr.eql(from)) break :blk l;
             break :blk null;
         };
-        // Handle message
+
+        // Handle device messages
         if (maybe) |light| {
             var packet = Packet.initBuffer(allocator, buf[0..len]) catch |err| switch (err) {
                 error.OutOfMemory => break,
@@ -101,25 +124,3 @@ pub fn main() !void {
 test {
     std.testing.refAllDecls(@This());
 }
-
-// test "simple test" {
-//     var list = std.ArrayList(i32).init(std.testing.allocator);
-//     defer list.deinit(); // Try commenting this out and see if zig detects the memory leak!
-//     try list.append(42);
-//     try std.testing.expectEqual(@as(i32, 42), list.pop());
-// }
-
-// test "use other module" {
-//     try std.testing.expectEqual(@as(i32, 150), lib.add(100, 50));
-// }
-
-// test "fuzz example" {
-//     const Context = struct {
-//         fn testOne(context: @This(), input: []const u8) anyerror!void {
-//             _ = context;
-//             // Try passing `--fuzz` to `zig build test` and see if it manages to fail this test case!
-//             try std.testing.expect(!std.mem.eql(u8, "canyoufindme", input));
-//         }
-//     };
-//     try std.testing.fuzz(Context{}, Context.testOne, .{});
-// }
