@@ -93,7 +93,7 @@ pub fn main() !void {
                 },
             };
             defer packet.deinit(allocator);
-            light.callback(allocator, packet);
+            light.callback(allocator, &packet);
         }
     }
 }

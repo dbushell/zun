@@ -27,8 +27,8 @@ pub const State = packed struct {
     kelvin: u16 = 0,
     _r1: u16 = 0,
     power: u16 = 0,
-    label: [32]u8 = undefined,
-    _r2: u64 = 0,
+    // label: [32]u8 = undefined,
+    // _r2: u64 = 0,
 };
 
 /// Returned by `get_power` (116)
@@ -94,17 +94,47 @@ pub fn nextSequence(self: *Self, allocator: Allocator) u8 {
 }
 
 /// Handle packets recieved from this device
-pub fn callback(self: *Self, allocator: Allocator, packet: Packet) void {
+pub fn callback(self: *Self, allocator: Allocator, packet: *Packet) void {
     // Aquire MAC address from initial state
-    if (std.mem.eql(u8, &self.target, &default_target)) {
-        assert(packet.getType() == .light_state);
-        @memcpy(&self.target, packet.target());
-    } else {
-        assert(std.mem.eql(u8, &self.target, packet.target()));
-    }
+    // if (std.mem.eql(u8, &self.target, &default_target)) {
+    //     assert(packet.getType() == .light_state);
+    //     @memcpy(&self.target, packet.target());
+    // } else {
+    //     assert(std.mem.eql(u8, &self.target, packet.target()));
+    // }
     self.freeSequence(allocator, packet.sequence());
     print("{any}: [{s}]\n", .{ self.addr, @tagName(packet.getType()) });
-    print("{any}\n", .{packet.payload()});
+    print("{any}\n{any}\n{d} {d}\n", .{
+        packet.header,
+        packet.payload(),
+        packet.payload().len,
+        @bitSizeOf(State),
+    });
+    if (packet.getType() == .light_state_power) {
+        assert(packet.size() == packet.payload().len + Packet.min_packet_size);
+        const payload = packet.payload();
+        const state: *StatePower = @constCast(@ptrCast(@alignCast(payload)));
+        // state = @constCast(@ptrCast(@alignCast(packet.payload())));
+        print("{any}\n", .{state});
+    }
+    if (packet.getType() == .light_state) {
+        assert(packet.size() == packet.payload().len + Packet.min_packet_size);
+
+        var state_buf: [12]u8 = .{0} ** 12;
+        @memcpy(&state_buf, packet.payload()[0..12]);
+        const state: *State = @ptrCast(@alignCast(&state_buf));
+        // const state: *State = @constCast(@ptrCast(@alignCast(packet.payload()[0..12])));
+
+        var label: [32:0]u8 = .{0} ** 32;
+        @memcpy(&label, packet.payload()[12..44]);
+        // const state_label: []const u8 = std.mem.span(@as(
+        //     [*:0]const u8,
+        //     packet.payload()[12..44 :0],
+        // ));
+        // const state: *State = @constCast(@ptrCast(@alignCast(packet.payload()[0..12])));
+        // state = @constCast(@ptrCast(@alignCast(packet.payload())));
+        print("{any}\n'{s}'\n", .{ state, label });
+    }
 }
 
 pub fn create(self: *Self, allocator: Allocator, packet_type: Packet.Type) !*Packet {
@@ -124,6 +154,17 @@ pub fn create(self: *Self, allocator: Allocator, packet_type: Packet.Type) !*Pac
 
 pub fn getState(self: *Self, allocator: Allocator, sockfd: std.posix.socket_t) !void {
     const packet = try self.create(allocator, .light_get);
+    _ = try std.posix.sendto(
+        sockfd,
+        packet.buf,
+        0,
+        &self.addr.any,
+        self.addr.getOsSockLen(),
+    );
+}
+
+pub fn getStatePower(self: *Self, allocator: Allocator, sockfd: std.posix.socket_t) !void {
+    const packet = try self.create(allocator, .light_get_power);
     _ = try std.posix.sendto(
         sockfd,
         packet.buf,
