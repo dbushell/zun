@@ -108,8 +108,9 @@ pub fn initBuffer(allocator: Allocator, src: []const u8) Error!Self {
 }
 
 /// Free the internal buffer
-pub fn deinit(self: Self, allocator: Allocator) void {
+pub fn deinit(self: *Self, allocator: Allocator) void {
     allocator.free(self.buf);
+    self.* = undefined;
 }
 
 /// Packet byte length (header + payload)
@@ -167,7 +168,7 @@ test "parse packet header" {
     var buf: [1024]u8 = .{0} ** 1024;
     const test_packet = .{ 68, 0, 0, 20, 235, 185, 233, 241, 208, 115, 213, 38, 132, 206, 0, 0, 76, 73, 70, 88, 86, 50, 0, 0, 0, 157, 63, 208, 246, 233, 173, 0, 25, 0, 0, 0, 75, 105, 116, 99, 104, 101, 110 };
     std.mem.copyForwards(u8, &buf, &test_packet);
-    const packet: Self = try .initBuffer(std.testing.allocator, &buf);
+    var packet: Self = try .initBuffer(std.testing.allocator, &buf);
     defer packet.deinit(std.testing.allocator);
     const state_label: []const u8 = std.mem.span(@as(
         [*:0]const u8,

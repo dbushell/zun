@@ -20,14 +20,14 @@ pub fn main() !void {
     defer if (is_debug) {
         _ = debug_allocator.deinit();
     };
-    // var arena_allocator = std.heap.ArenaAllocator.init(allocator);
-    // defer arena_allocator.deinit();
-    // const arena = arena_allocator.allocator();
 
-    std.debug.print("Zun!\n", .{});
-
+    // Store devices
     var lights: std.ArrayListUnmanaged(*Light) = .empty;
     defer {
+        for (lights.items) |light| {
+            light.deinit(allocator);
+            allocator.destroy(light);
+        }
         lights.deinit(allocator);
     }
 
@@ -35,62 +35,57 @@ pub fn main() !void {
     const home_path = posix.getenv("HOME") orelse @panic("no HOME env");
     const home = try std.fs.openDirAbsolute(home_path, .{});
     const file = try home.openFile(".zun", .{});
-    defer file.close();
     const reader = file.reader();
     var conf: [1024 * 10]u8 = undefined;
     const read = try reader.readAll(&conf);
+    file.close();
 
     // Iterate lines and parse IP addresses
     var conf_lines = std.mem.tokenizeScalar(u8, conf[0..read], '\n');
     while (conf_lines.next()) |line| {
         const addr = Address.parseIp4(line, 56700) catch continue;
         const light = try allocator.create(Light);
-        light.* = .{ .addr = addr };
+        light.* = Light.init(addr);
         try lights.append(allocator, light);
     }
+    if (lights.items.len == 0) {
+        @panic("no device IP addresses found");
+    }
 
-    const socket = try posix.socket(
+    // Setup UDP socket
+    const sockfd = try posix.socket(
         posix.AF.INET,
         posix.SOCK.DGRAM,
         posix.IPPROTO.UDP,
     );
-    defer posix.close(socket);
-
+    defer posix.close(sockfd);
     const addr = try Address.parseIp("0.0.0.0", 56700);
-    try posix.bind(socket, &addr.any, addr.getOsSockLen());
+    try posix.bind(sockfd, &addr.any, addr.getOsSockLen());
 
-    var buf: [Packet.max_packet_size]u8 = undefined;
-
+    // Request initial states
     for (lights.items) |light| {
         std.debug.print("Light: {any}\n", .{light.addr});
-        const packet = try light.create(allocator, .get_label);
-        std.debug.print("{x}\n", .{packet.buf});
-        _ = try posix.sendto(
-            socket,
-            packet.buf,
-            0,
-            &light.addr.any,
-            light.addr.getOsSockLen(),
-        );
+        try light.getState(allocator, sockfd);
     }
 
+    var buf: [Packet.max_packet_size]u8 = undefined;
     while (true) {
         var src_addr: std.posix.sockaddr.in align(4) = undefined;
         var addrlen: std.posix.socklen_t = @sizeOf(std.posix.sockaddr.in);
-
-        const len = try posix.recvfrom(socket, &buf, 0, @ptrCast(&src_addr), &addrlen);
+        const len = try posix.recvfrom(sockfd, &buf, 0, @ptrCast(&src_addr), &addrlen);
+        // Magic command
         if (std.mem.eql(u8, buf[0..3], "end")) {
             break;
         }
+        // Find known device
         const from = Address.initPosix(@ptrCast(&src_addr));
-
         const maybe: ?*Light = blk: {
             for (lights.items) |l| if (l.addr.eql(from)) break :blk l;
             break :blk null;
         };
-
+        // Handle message
         if (maybe) |light| {
-            const packet = Packet.initBuffer(allocator, buf[0..len]) catch |err| switch (err) {
+            var packet = Packet.initBuffer(allocator, buf[0..len]) catch |err| switch (err) {
                 error.OutOfMemory => break,
                 else => {
                     std.debug.print("Packet error: {s}\n", .{@errorName(err)});
@@ -98,25 +93,7 @@ pub fn main() !void {
                 },
             };
             defer packet.deinit(allocator);
-            if (std.mem.eql(u8, &light.target, &Light.default_target)) {
-                @memcpy(&light.target, packet.target());
-                const p2 = try light.create(allocator, .get_label);
-                defer p2.deinit(allocator);
-                std.debug.print("{x}\n", .{p2.buf});
-                _ = try posix.sendto(
-                    socket,
-                    p2.buf,
-                    0,
-                    &light.addr.any,
-                    light.addr.getOsSockLen(),
-                );
-            }
-            std.debug.print("Light: {any}\nfrom: \"{x}\" \nlength: {d}\n{x}\n\n", .{
-                light.addr,
-                light.target,
-                packet.size(),
-                packet.buf,
-            });
+            light.callback(allocator, packet);
         }
     }
 }
