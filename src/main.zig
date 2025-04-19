@@ -79,18 +79,26 @@ pub fn main() !void {
             if (std.mem.eql(u8, command, "end")) {
                 break;
             }
+            const reset = std.mem.eql(u8, command, "reset");
             const command_on = std.mem.eql(u8, command, "on");
             const command_off = std.mem.eql(u8, command, "off");
-            if (command_on or command_off) {
+            if (reset or command_on or command_off) {
                 if (iter.next()) |label| {
                     const maybe: ?*Light = blk: {
                         for (lights.items) |l| if (l.compareLabel(label)) break :blk l;
                         break :blk null;
                     };
                     if (maybe) |light| {
-                        light.setPower(allocator, socket, command_on) catch |err| {
-                            std.debug.print("{s}\n", .{@errorName(err)});
-                        };
+                        if (reset) {
+                            try light.setHSBK(0, 0, 100, 3700);
+                            light.setColor(allocator, socket) catch |err| {
+                                std.debug.print("{s}\n", .{@errorName(err)});
+                            };
+                        } else {
+                            light.setPower(allocator, socket, command_on) catch |err| {
+                                std.debug.print("{s}\n", .{@errorName(err)});
+                            };
+                        }
                     }
                 }
                 continue;
