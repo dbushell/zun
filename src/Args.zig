@@ -1,5 +1,8 @@
 const std = @import("std");
 
+const isPrint = std.ascii.isPrint;
+const isWhitespace = std.ascii.isWhitespace;
+
 const Self = @This();
 
 buf: [1024]u8 = .{0} ** 1024,
@@ -13,12 +16,10 @@ pub fn init(input: []const u8) Self {
     @memcpy(args.buf[0..trim.len], input[0..trim.len]);
     var start: u8 = 0;
     for (trim, 0..) |c, i| {
-        const is_last = i == trim.len - 1;
-        const is_print = std.ascii.isPrint(c);
-        const is_white = std.ascii.isWhitespace(c);
-        if (is_print and !is_white and !is_last) continue;
-        if (is_last or start != i) {
-            const end: u8 = @intCast(if (is_last) i + 1 else i);
+        const last = i == trim.len - 1;
+        if (isPrint(c) and !isWhitespace(c) and !last) continue;
+        if (last or start != i) {
+            const end: u8 = @intCast(if (last) i + 1 else i);
             args.idx[args.len * 2] = start;
             args.idx[args.len * 2 + 1] = end;
             args.len += 1;
@@ -32,7 +33,7 @@ pub fn reset(self: *Self) void {
     self.index = 0;
 }
 
-pub fn at(self: *Self, i: u8) ?[]const u8 {
+pub fn at(self: *Self, i: usize) ?[]const u8 {
     if (i >= self.len) return null;
     return self.buf[self.idx[i * 2]..self.idx[i * 2 + 1]];
 }
@@ -43,18 +44,16 @@ pub fn next(self: *Self) ?[]const u8 {
     return result;
 }
 
-pub fn peek(self: *Self) ?[]const u8 {
-    if (self.index == self.len) return null;
-    const i = self.index * 2;
-    return self.buf[self.idx[i]..self.idx[i + 1]];
-}
-
 pub fn nexteql(self: *Self, arg: []const u8) bool {
     if (self.peeql(arg)) {
         _ = self.next();
         return true;
     }
     return false;
+}
+
+pub fn peek(self: *Self) ?[]const u8 {
+    return self.at(self.index);
 }
 
 pub fn peeql(self: *Self, arg: []const u8) bool {
