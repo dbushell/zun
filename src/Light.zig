@@ -79,6 +79,12 @@ pub const SetColor = packed struct {
     duration: u32 = 0,
 };
 
+/// Match light by label (case-insensitive)
+pub fn find(lights: *std.ArrayListUnmanaged(*Self), label: []const u8) ?*Self {
+    for (lights.items) |light| if (light.compareLabel(label)) return light;
+    return null;
+}
+
 pub fn init(addr: Address) Self {
     return .{ .addr = addr };
 }
@@ -115,7 +121,7 @@ pub fn getLabel(self: *Self) []const u8 {
     return std.mem.span(@as([*:0]const u8, self.label[0.. :0]));
 }
 
-// Compare case-insensitive label
+// Compare labels (case-insensitive)
 pub fn compareLabel(self: *Self, compare_label: []const u8) bool {
     var a: [32]u8 = undefined;
     var b: [32]u8 = undefined;

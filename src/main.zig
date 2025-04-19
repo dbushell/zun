@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 const Zonfig = @import("./Zonfig.zig");
+const Args = @import("./Args.zig");
 const Packet = @import("./Packet.zig");
 const Light = @import("./Light.zig");
 
@@ -66,52 +67,55 @@ pub fn main() !void {
 
     while (true) {
         // Read buffer
-        var buf: [Packet.max_packet_size]u8 = undefined;
+        var buf: [Packet.max_packet_size]u8 = @splat(0);
         var src_addr: posix.sockaddr align(4) = undefined;
         var src_len: posix.socklen_t = @sizeOf(posix.sockaddr);
         const len = try posix.recvfrom(socket, &buf, 0, @ptrCast(&src_addr), &src_len);
         const src_ip = Address.initPosix(@ptrCast(&src_addr));
 
-        // Handle commands
-        var iter = std.mem.tokenizeScalar(u8, std.mem.trim(u8, buf[0..len], " \n"), ' ');
-        if (iter.next()) |command| {
-            if (std.mem.eql(u8, command, "end")) {
-                break;
+        // Handle ASCII commands
+        var args: Args = .init(buf[0..len]);
+
+        if (args.peeql("end")) break;
+
+        // Preemptively find light by label
+        const match: ?*Light = find: {
+            if (args.at(1)) |label| {
+                if (Light.find(&lights, label)) |light| break :find light;
             }
-            const reset = std.mem.eql(u8, command, "reset");
-            const command_on = std.mem.eql(u8, command, "on");
-            const command_off = std.mem.eql(u8, command, "off");
-            if (reset or command_on or command_off) {
-                if (iter.next()) |label| {
-                    const maybe: ?*Light = blk: {
-                        for (lights.items) |l| if (l.compareLabel(label)) break :blk l;
-                        break :blk null;
-                    };
-                    if (maybe) |light| {
-                        if (reset) {
-                            try light.setHSBK(0, 0, 100, 3700);
-                            light.setColor(allocator, socket) catch |err| {
-                                std.debug.print("{s}\n", .{@errorName(err)});
-                            };
-                        } else {
-                            light.setPower(allocator, socket, command_on) catch |err| {
-                                std.debug.print("{s}\n", .{@errorName(err)});
-                            };
-                        }
-                    }
-                }
-                continue;
-            }
-        }
+            break :find null;
+        };
+
+        if (args.peeql("on")) if (match) |light| {
+            light.setPower(allocator, socket, true) catch |err| {
+                std.debug.print("{s}\n", .{@errorName(err)});
+            };
+            continue;
+        };
+
+        if (args.peeql("off")) if (match) |light| {
+            light.setPower(allocator, socket, false) catch |err| {
+                std.debug.print("{s}\n", .{@errorName(err)});
+            };
+            continue;
+        };
+
+        if (args.peeql("reset")) if (match) |light| {
+            try light.setHSBK(0, 0, 100, 3700);
+            light.setColor(allocator, socket) catch |err| {
+                std.debug.print("{s}\n", .{@errorName(err)});
+            };
+            continue;
+        };
 
         // Find known device
-        const maybe: ?*Light = blk: {
-            for (lights.items) |l| if (l.addr.eql(src_ip)) break :blk l;
-            break :blk null;
+        const device: ?*Light = find: {
+            for (lights.items) |l| if (l.addr.eql(src_ip)) break :find l;
+            break :find null;
         };
 
         // Handle device messages
-        if (maybe) |light| {
+        if (device) |light| {
             var packet = Packet.initBuffer(allocator, buf[0..len]) catch |err| switch (err) {
                 error.OutOfMemory => break,
                 else => {
