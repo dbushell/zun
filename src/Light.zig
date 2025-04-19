@@ -3,6 +3,7 @@ const Packet = @import("./Packet.zig");
 
 const Address = std.net.Address;
 const Allocator = std.mem.Allocator;
+const Socket = std.posix.socket_t;
 const assert = std.debug.assert;
 const print = std.debug.print;
 
@@ -10,14 +11,22 @@ const Self = @This();
 
 pub const default_target = .{0} ** 6;
 
+pub const min_kelvin = 3200;
+pub const max_kelvin = 9000;
+
 addr: Address,
 target: [6]u8 = .{0} ** 6,
-label_buffer: [32:0]u8 = .{0} ** 32,
 store: [256]?*Packet = .{null} ** 256,
 sequence: u8 = 0,
 
-/// Returned by `get` (101)
-pub const State = packed struct {
+hue: u16 = 0,
+saturation: u16 = 0,
+brightness: u16 = 0,
+kelvin: u16 = 0,
+power: bool = false,
+label_buffer: [32:0]u8 = .{0} ** 32,
+
+pub const GetState = packed struct {
     // 0 to 65535 scaled between 0° and 360°
     hue: u16 = 0,
     // 0 to 65535 scaled between 0% and 100%
@@ -26,16 +35,15 @@ pub const State = packed struct {
     brightness: u16 = 0,
     /// Range 2500 (warm) to 9000 (cool)
     kelvin: u16 = 0,
+    // Reserved
     _r1: u16 = 0,
+    /// Should be 0 or 65535
     power: u16 = 0,
-    // label: [32]u8 = undefined,
-    // _r2: u64 = 0,
+    /// 32 byte null terminated string
+    label: u256 = undefined,
+    // Reserved
+    _r2: u64 = 0,
 };
-
-/// Returned by `get_power` (116)
-// pub const StatePower = packed struct {
-//     level: u16 = 0,
-// };
 
 pub const SetColor = packed struct {
     _r1: u8 = 0,
@@ -49,6 +57,11 @@ pub const SetColor = packed struct {
     kelvin: u16 = 0,
     // Color transition time in milliseconds
     duration: u32 = 0,
+};
+
+pub const GetPower = packed struct {
+    /// Should be 0 or 65535
+    level: u16 = 0,
 };
 
 pub const SetPower = packed struct {
@@ -110,7 +123,7 @@ pub fn nextSequence(self: *Self, allocator: Allocator) u8 {
 }
 
 /// Handle packets recieved from this device
-pub fn callback(self: *Self, allocator: Allocator, packet: *Packet) void {
+pub fn callback(self: *Self, allocator: Allocator, packet: *Packet) !void {
     // Aquire MAC address from initial state
     if (std.mem.eql(u8, &self.target, &default_target)) {
         assert(packet.getType() == .light_state);
@@ -119,28 +132,34 @@ pub fn callback(self: *Self, allocator: Allocator, packet: *Packet) void {
         assert(std.mem.eql(u8, &self.target, packet.target()));
     }
     self.freeSequence(allocator, packet.sequence());
-
+    assert(packet.size() == packet.payload().len + Packet.min_packet_size);
     switch (packet.getType()) {
         .light_state => {
-            assert(packet.size() == packet.payload().len + Packet.min_packet_size);
-            // var state_buf: [12]u8 = .{0} ** 12;
-            // @memcpy(&state_buf, packet.payload()[0..12]);
-            // const state: *State = @ptrCast(@alignCast(&state_buf));
-            @memcpy(&self.label_buffer, packet.payload()[12..44]);
-            // print("{any}\n'{s}' '{d}'\n", .{state});
+            var state_buf = try allocator.alloc(u8, 52);
+            defer allocator.free(state_buf);
+            @memcpy(state_buf, packet.payload()[0..52]);
+            const state: *GetState = @ptrCast(@alignCast(state_buf[0..52]));
+            assert(state.kelvin >= min_kelvin);
+            assert(state.kelvin <= max_kelvin);
+            assert(state.power == 0 or state.power == std.math.maxInt(u16));
+            self.hue = state.hue;
+            self.saturation = state.saturation;
+            self.brightness = state.brightness;
+            self.power = state.power == std.math.maxInt(u16);
+            @memcpy(&self.label_buffer, std.mem.asBytes(&state.label));
+        },
+        .light_state_power => {
+            var state_buf = try allocator.alloc(u8, 2);
+            defer allocator.free(state_buf);
+            @memcpy(state_buf, packet.payload()[0..2]);
+            const state: *GetPower = @ptrCast(@alignCast(state_buf[0..2]));
+            print("{any}\n", .{state});
         },
         else => {
             print("Unknown packet:\n{any}\n", .{packet});
         },
     }
-    // if (packet.getType() == .light_state_power) {
-    //     assert(packet.size() == packet.payload().len + Packet.min_packet_size);
-    //     const payload = packet.payload();
-    //     const state: *StatePower = @constCast(@ptrCast(@alignCast(payload)));
-    //     // state = @constCast(@ptrCast(@alignCast(packet.payload())));
-    //     print("{any}\n", .{state});
-    // }
-    print("from: {any} (mac: {x}), type: '{s}'', label: '{s}'\n", .{
+    print("from: {any} (mac: {x}), type: {s}, label: '{s}'\n", .{
         self.addr,
         self.target,
         @tagName(packet.getType()),
@@ -164,30 +183,30 @@ pub fn create(self: *Self, allocator: Allocator, packet_type: Packet.Type) !*Pac
     return packet;
 }
 
-pub fn getState(self: *Self, allocator: Allocator, sockfd: std.posix.socket_t) !void {
-    const packet = try self.create(allocator, .light_get);
-    _ = try std.posix.sendto(
-        sockfd,
-        packet.buf,
-        0,
-        &self.addr.any,
-        self.addr.getOsSockLen(),
-    );
+/// Send UDP packet to device
+pub fn send(self: *Self, socket: Socket, buf: []const u8) !void {
+    const sent = try std.posix.sendto(socket, buf, 0, &self.addr.any, self.addr.getOsSockLen());
+    assert(sent == buf.len);
 }
 
-pub fn setPower(self: *Self, allocator: Allocator, sockfd: std.posix.socket_t, power: bool) !void {
+/// Request state update
+pub fn getState(self: *Self, allocator: Allocator, socket: Socket) !void {
+    const packet = try self.create(allocator, .light_get);
+    try self.send(socket, packet.buf);
+}
+
+/// Request power update
+pub fn getPower(self: *Self, allocator: Allocator, socket: Socket) !void {
+    const packet = try self.create(allocator, .light_get_power);
+    try self.send(socket, packet.buf);
+}
+
+/// Toggle power on or off
+pub fn setPower(self: *Self, allocator: Allocator, socket: Socket, power: bool) !void {
     const packet = try self.create(allocator, .light_set_power);
-    const payload = SetPower{
-        .level = if (power) std.math.maxInt(u16) else 0,
-    };
-    const payload_buf = std.mem.asBytes(&payload);
-    const buf = try std.mem.concat(allocator, u8, &.{ packet.buf, payload_buf });
+    var payload = SetPower{};
+    payload.level = if (power) std.math.maxInt(u16) else 0;
+    const buf = try std.mem.concat(allocator, u8, &.{ packet.buf, std.mem.asBytes(&payload) });
     defer allocator.free(buf);
-    _ = try std.posix.sendto(
-        sockfd,
-        buf,
-        0,
-        &self.addr.any,
-        self.addr.getOsSockLen(),
-    );
+    try self.send(socket, buf);
 }

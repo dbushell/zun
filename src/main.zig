@@ -50,19 +50,19 @@ pub fn main() !void {
     }
 
     // Setup UDP socket
-    const sockfd = try posix.socket(
+    const socket = try posix.socket(
         posix.AF.INET,
         posix.SOCK.DGRAM,
         posix.IPPROTO.UDP,
     );
-    defer posix.close(sockfd);
+    defer posix.close(socket);
     const addr = try Address.parseIp("0.0.0.0", 56700);
-    try posix.bind(sockfd, &addr.any, addr.getOsSockLen());
+    try posix.bind(socket, &addr.any, addr.getOsSockLen());
 
     // Request states
     for (lights.items) |light| {
         std.debug.print("Light: {any}\n", .{light.addr});
-        try light.getState(allocator, sockfd);
+        try light.getState(allocator, socket);
     }
 
     while (true) {
@@ -70,7 +70,7 @@ pub fn main() !void {
         var buf: [Packet.max_packet_size]u8 = undefined;
         var src_addr: posix.sockaddr align(4) = undefined;
         var src_len: posix.socklen_t = @sizeOf(posix.sockaddr);
-        const len = try posix.recvfrom(sockfd, &buf, 0, @ptrCast(&src_addr), &src_len);
+        const len = try posix.recvfrom(socket, &buf, 0, @ptrCast(&src_addr), &src_len);
         const src_ip = Address.initPosix(@ptrCast(&src_addr));
 
         // Handle commands
@@ -88,7 +88,7 @@ pub fn main() !void {
                         break :blk null;
                     };
                     if (maybe) |light| {
-                        light.setPower(allocator, sockfd, command_on) catch |err| {
+                        light.setPower(allocator, socket, command_on) catch |err| {
                             std.debug.print("{s}\n", .{@errorName(err)});
                         };
                     }
@@ -113,7 +113,7 @@ pub fn main() !void {
                 },
             };
             defer packet.deinit(allocator);
-            light.callback(allocator, &packet);
+            try light.callback(allocator, &packet);
         }
     }
 }
