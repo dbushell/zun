@@ -3,7 +3,6 @@ const Allocator = std.mem.Allocator;
 
 const Self = @This();
 
-// buf: [] u8 = undefined,
 buf: []const u8 = undefined,
 header: *Header = undefined,
 

@@ -20,17 +20,19 @@ pub const Error = error{
     InvalidKelvin,
 };
 
+// Client state
 addr: Address,
 target: [6]u8 = default_target,
+label: [32:0]u8 = .{0} ** 32,
 store: [256]?*Packet = .{null} ** 256,
 sequence: u8 = 0,
 
+// Light state
 hue: u16 = 0,
 saturation: u16 = 0,
 brightness: u16 = 0,
 kelvin: u16 = 0,
 power: bool = false,
-label_buffer: [32:0]u8 = .{0} ** 32,
 
 pub const GetPower = packed struct {
     /// Should be 0 or 65535
@@ -110,7 +112,7 @@ pub fn getSource(self: *Self) *align(4) [4]u8 {
 
 /// Device name
 pub fn getLabel(self: *Self) []const u8 {
-    return std.mem.span(@as([*:0]const u8, self.label_buffer[0.. :0]));
+    return std.mem.span(@as([*:0]const u8, self.label[0.. :0]));
 }
 
 // Compare case-insensitive label
@@ -148,7 +150,7 @@ pub fn callback(self: *Self, allocator: Allocator, packet: *Packet) !void {
             self.saturation = state.saturation;
             self.brightness = state.brightness;
             self.power = state.power == max_u16;
-            @memcpy(&self.label_buffer, std.mem.asBytes(&state.label));
+            @memcpy(&self.label, std.mem.asBytes(&state.label));
         },
         .light_state_power => {
             var state_buf = try allocator.alloc(u8, 2);
@@ -158,14 +160,15 @@ pub fn callback(self: *Self, allocator: Allocator, packet: *Packet) !void {
             self.power = state.level == max_u16;
         },
         else => {
-            print("Unknown packet:\n{any}\n", .{packet});
+            print("UNKNOWN:\n{x}\n\n", .{packet.buf});
         },
     }
-    print("from: {any} (mac: {x}), type: {s}, label: '{s}'\n", .{
+    print("FROM: {any} {s} {s} {x}\n{x}\n\n", .{
         self.addr,
-        self.target,
-        @tagName(packet.getType()),
         self.getLabel(),
+        @tagName(packet.getType()),
+        self.target,
+        packet.buf,
     });
 }
 
@@ -181,13 +184,13 @@ pub fn create(self: *Self, allocator: Allocator, packet_type: Packet.Type) !*Pac
         packet.setTarget(&self.target);
     }
     self.store[sequence] = packet;
-    std.debug.print("CREATE: {x}\n", .{packet.buf});
     return packet;
 }
 
 /// Send UDP packet to device
 pub fn send(self: *Self, socket: Socket, buf: []const u8) !void {
     const sent = try std.posix.sendto(socket, buf, 0, &self.addr.any, self.addr.getOsSockLen());
+    std.debug.print("TO: {any}\n{x}\n\n", .{ self.addr, buf });
     assert(sent == buf.len);
 }
 

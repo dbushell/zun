@@ -61,7 +61,6 @@ pub fn main() !void {
 
     // Request states
     for (lights.items) |light| {
-        std.debug.print("Light: {any}\n", .{light.addr});
         try light.getState(allocator, socket);
     }
 
