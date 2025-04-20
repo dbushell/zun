@@ -125,6 +125,8 @@ pub fn main() !void {
             };
             defer packet.deinit(allocator);
             try light.callback(allocator, &packet);
+        } else {
+            std.debug.print("Unknown: {x}\n", .{buf});
         }
     }
 }

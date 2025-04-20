@@ -90,24 +90,26 @@ pub fn init(addr: Address) Self {
 }
 
 pub fn deinit(self: *Self, allocator: Allocator) void {
-    for (0..self.store.len) |i| self.freeSequence(allocator, @truncate(i));
+    for (0..self.store.len) |i| _ = self.freeSequence(allocator, @truncate(i));
     self.* = undefined;
 }
 
 /// Clear packet memory at index if set
-pub fn freeSequence(self: *Self, allocator: Allocator, index: u8) void {
+pub fn freeSequence(self: *Self, allocator: Allocator, index: u8) bool {
     if (self.store[index]) |p| {
         p.deinit(allocator);
         allocator.destroy(p);
         self.store[index] = null;
+        return true;
     }
+    return false;
 }
 
 /// Increment message number (clears previous store)
 pub fn nextSequence(self: *Self, allocator: Allocator) u8 {
     self.sequence +%= 1;
     if (self.sequence == 0) self.sequence = 1;
-    self.freeSequence(allocator, self.sequence);
+    _ = self.freeSequence(allocator, self.sequence);
     return self.sequence;
 }
 
@@ -134,14 +136,15 @@ pub fn compareLabel(self: *Self, compare_label: []const u8) bool {
 
 /// Handle packets recieved from this device
 pub fn callback(self: *Self, allocator: Allocator, packet: *Packet) !void {
+
     // Aquire MAC address from initial state
     if (std.mem.eql(u8, &self.target, &default_target)) {
-        assert(packet.getType() == .light_state);
+        assert(packet.getType() == .acknowledgement);
         @memcpy(&self.target, packet.target());
     } else {
         assert(std.mem.eql(u8, &self.target, packet.target()));
     }
-    self.freeSequence(allocator, packet.sequence());
+
     assert(packet.size() == packet.payload().len + Packet.min_packet_size);
     switch (packet.getType()) {
         .light_state => {
@@ -165,8 +168,12 @@ pub fn callback(self: *Self, allocator: Allocator, packet: *Packet) !void {
             const state: *GetPower = @ptrCast(@alignCast(state_buf[0..2]));
             self.power = state.level == max_u16;
         },
+        .acknowledgement => {
+            const success = self.freeSequence(allocator, packet.sequence());
+            assert(success);
+        },
         else => {
-            print("UNKNOWN:\n{x}\n\n", .{packet.buf});
+            print("UNKNOWN:\n{x}\n{any}\n\n", .{ packet.buf, packet.getType() });
         },
     }
     print("FROM: {any} {s} {s} {x}\n{x}\n\n", .{
@@ -188,6 +195,9 @@ pub fn create(self: *Self, allocator: Allocator, packet_type: Packet.Type) !*Pac
     // Add device MAC address target if defined
     if (!std.mem.eql(u8, &self.target, &default_target)) {
         packet.setTarget(&self.target);
+        // Doesn't seem to work and isn't necessary
+        // packet.header.tagged = false;
+        // packet.header.addressable = true;
     }
     self.store[sequence] = packet;
     return packet;
@@ -196,7 +206,7 @@ pub fn create(self: *Self, allocator: Allocator, packet_type: Packet.Type) !*Pac
 /// Send UDP packet to device
 pub fn send(self: *Self, socket: Socket, buf: []const u8) !void {
     const sent = try std.posix.sendto(socket, buf, 0, &self.addr.any, self.addr.getOsSockLen());
-    std.debug.print("TO: {any}\n{x}\n\n", .{ self.addr, buf });
+    print("TO: {any}\n{x}\n\n", .{ self.addr, buf });
     assert(sent == buf.len);
 }
 

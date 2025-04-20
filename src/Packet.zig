@@ -20,16 +20,17 @@ pub const Error = error{
 
 pub const Header = packed struct {
     size: u16 = 36,
+    protocol1: u8 = 0,
     origin: u2 = 0,
-    tagged: bool = false,
+    tagged: bool = true,
     addressable: bool = false,
-    protocol: u12 = 320, // @todo Fix?
+    protocol2: u4 = 1,
     source: u32 = 0,
     target: u64 = 0,
     _r1: u48 = 0,
-    _r2: u6 = 0,
-    ack_required: bool = true,
     res_required: bool = false,
+    ack_required: bool = true,
+    _r2: u6 = 0,
     sequence: u8 = 0,
     _r3: u64 = 0,
     type: u8 = 0,
@@ -120,7 +121,11 @@ pub fn size(self: Self) u16 {
 
 /// Protocol number: must be 1024 (decimal)
 pub fn protocol(self: Self) u16 {
-    return self.header.protocol << 4;
+    // This is probably wrong but whatever
+    // Docs say: "Lower octet: Byte 2. Upper 4 bits: Byte 3, Bits 0-3."
+    const buf: [2]u8 = .{ self.header.protocol1, @as(u8, self.header.protocol2) << 2 };
+    const value = std.mem.readInt(u16, &buf, .little);
+    return value;
 }
 
 /// Unique identifier set by client
