@@ -9,6 +9,7 @@ const print = std.debug.print;
 
 const Self = @This();
 
+pub const max_u8 = std.math.maxInt(u8);
 pub const max_u16 = std.math.maxInt(u16);
 pub const min_kelvin = 2500;
 pub const max_kelvin = 9000;
@@ -158,6 +159,7 @@ pub fn callback(self: *Self, allocator: Allocator, packet: *Packet) !void {
             self.hue = state.hue;
             self.saturation = state.saturation;
             self.brightness = state.brightness;
+            self.kelvin = state.kelvin;
             self.power = state.power == max_u16;
             @memcpy(&self.label, std.mem.asBytes(&state.label));
         },
@@ -225,6 +227,7 @@ pub fn getPower(self: *Self, allocator: Allocator, socket: Socket) !void {
 /// Toggle power on or off
 pub fn setPower(self: *Self, allocator: Allocator, socket: Socket, power: bool) !void {
     const packet = try self.create(allocator, .light_set_power);
+    self.power = power;
     var payload = SetPower{
         .level = if (power) max_u16 else 0,
     };
@@ -233,10 +236,15 @@ pub fn setPower(self: *Self, allocator: Allocator, socket: Socket, power: bool) 
     try self.send(socket, buf);
 }
 
-/// Hue rotate between 0° and 360°
+/// Hue between 0° and 360°
 pub fn setHue(self: *Self, degrees: u16) Error!void {
     if (degrees > 360) return error.InvalidDegrees;
     self.hue = @truncate(@divFloor(@as(usize, degrees) * max_u16, 360));
+}
+
+/// Hue between 0° and 360°
+pub fn getHue(self: *Self) u16 {
+    return @truncate(@divFloor(@as(usize, self.hue) * 360, max_u16));
 }
 
 /// Saturation between 0% and 100%
@@ -245,16 +253,31 @@ pub fn setSaturation(self: *Self, percent: u8) Error!void {
     self.saturation = @truncate(@divFloor(@as(usize, percent) * max_u16, 100));
 }
 
+/// Saturation between 0% and 100%
+pub fn getSaturation(self: *Self) u8 {
+    return @truncate(@divFloor(@as(usize, self.saturation) * 100, max_u8));
+}
+
 /// Brightness between 0% and 100%
 pub fn setBrightness(self: *Self, percent: u8) Error!void {
     if (percent > 100) return error.InvalidPercentage;
     self.brightness = @truncate(@divFloor(@as(usize, percent) * max_u16, 100));
 }
 
+/// Brightness between 0% and 100%
+pub fn getBrightness(self: *Self) u8 {
+    return @truncate(@divFloor(@as(usize, self.brightness) * 100, max_u8));
+}
+
 /// Kelvin range 2500 (warm) to 9000 (cool)
 pub fn setKelvin(self: *Self, value: u16) Error!void {
     if (value < min_kelvin or value > max_kelvin) return error.InvalidKelvin;
     self.kelvin = value;
+}
+
+/// Kelvin range 2500 (warm) to 9000 (cool)
+pub fn getKelvin(self: *Self) u16 {
+    return self.kelvin;
 }
 
 /// Adjust hue, saturation, brightness, and kelvin
@@ -277,6 +300,25 @@ pub fn setColor(self: *Self, allocator: Allocator, socket: Socket) !void {
     const buf = try std.mem.concat(allocator, u8, &.{ packet.buf, std.mem.asBytes(&payload) });
     defer allocator.free(buf);
     try self.send(socket, buf);
+}
+
+pub fn toJson(self: *Self, buf: []u8) ![]u8 {
+    const fmt =
+        \\ {{
+        \\   "hue": {d},
+        \\   "saturation": {d},
+        \\   "brightness": {d},
+        \\   "kelvin": {d},
+        \\   "power": {any}
+        \\ }}
+    ;
+    return try std.fmt.bufPrint(buf, fmt, .{
+        self.getHue(),
+        self.getSaturation(),
+        self.getBrightness(),
+        self.getKelvin(),
+        self.power,
+    });
 }
 
 test "set hue" {

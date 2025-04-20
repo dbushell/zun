@@ -75,38 +75,34 @@ pub fn main() !void {
 
         // Handle ASCII commands
         var args: Args = .init(buf[0..len]);
-
-        if (args.peeql("end")) break;
-
-        // Preemptively find light by label
-        const match: ?*Light = find: {
-            if (args.at(1)) |label| {
-                if (Light.find(&lights, label)) |light| break :find light;
+        if (args.len > 0) {
+            if (args.peeql("end")) break;
+            // Light name must be second argument
+            const light: *Light = find: {
+                if (args.at(1)) |label| if (Light.find(&lights, label)) |l| break :find l;
+                continue;
+            };
+            if (args.peeql("power")) {
+                if (args.at(2)) |arg| {
+                    const level = std.fmt.parseInt(u1, arg, 10) catch continue;
+                    light.setPower(allocator, socket, level == 1) catch |err| {
+                        std.debug.print("{s}\n", .{@errorName(err)});
+                        continue;
+                    };
+                }
             }
-            break :find null;
-        };
-
-        if (args.peeql("on")) if (match) |light| {
-            light.setPower(allocator, socket, true) catch |err| {
-                std.debug.print("{s}\n", .{@errorName(err)});
-            };
+            if (args.peeql("reset")) {
+                try light.setHSBK(0, 0, 100, 3700);
+                light.setColor(allocator, socket) catch |err| {
+                    std.debug.print("{s}\n", .{@errorName(err)});
+                };
+            }
+            // Always return JSON state
+            var json_buf: [1024]u8 = .{0} ** 1024;
+            const json = light.toJson(&json_buf) catch continue;
+            _ = try posix.sendto(socket, json, 0, &src_addr, src_len);
             continue;
-        };
-
-        if (args.peeql("off")) if (match) |light| {
-            light.setPower(allocator, socket, false) catch |err| {
-                std.debug.print("{s}\n", .{@errorName(err)});
-            };
-            continue;
-        };
-
-        if (args.peeql("reset")) if (match) |light| {
-            try light.setHSBK(0, 0, 100, 3700);
-            light.setColor(allocator, socket) catch |err| {
-                std.debug.print("{s}\n", .{@errorName(err)});
-            };
-            continue;
-        };
+        }
 
         // Find known device
         const device: ?*Light = find: {
@@ -126,7 +122,7 @@ pub fn main() !void {
             defer packet.deinit(allocator);
             try light.callback(allocator, &packet);
         } else {
-            std.debug.print("Unknown: {x}\n", .{buf});
+            std.debug.print("Unknown: {x}\n", .{buf[0..len]});
         }
     }
 }

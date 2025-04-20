@@ -12,12 +12,13 @@ index: usize = 0,
 
 pub fn init(input: []const u8) Self {
     var args = Self{};
+    for (input) |c| if (!isPrint(c)) return args;
     const trim = std.mem.trim(u8, input, " \t\n");
     @memcpy(args.buf[0..trim.len], input[0..trim.len]);
     var start: u8 = 0;
     for (trim, 0..) |c, i| {
         const last = i == trim.len - 1;
-        if (isPrint(c) and !isWhitespace(c) and !last) continue;
+        if (!isWhitespace(c) and !last) continue;
         if (last or start != i) {
             const end: u8 = @intCast(if (last) i + 1 else i);
             args.idx[args.len * 2] = start;
