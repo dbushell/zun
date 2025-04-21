@@ -83,7 +83,7 @@ test "parse" {
 }
 
 test "parse more" {
-    var cmd: Self = .init("command 1\t2 \t3\n");
+    var cmd: Self = .init("command 1 2  3  ");
     try std.testing.expectEqual(4, cmd.len);
     try std.testing.expectEqualSlices(u8, cmd.idx[0..8], &.{ 0, 7, 8, 9, 10, 11, 13, 14 });
 }

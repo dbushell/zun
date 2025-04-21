@@ -153,9 +153,11 @@ pub fn callback(self: *Self, allocator: Allocator, packet: *Packet) !void {
             defer allocator.free(state_buf);
             @memcpy(state_buf, packet.payload()[0..52]);
             const state: *GetState = @ptrCast(@alignCast(state_buf[0..52]));
+
             assert(state.kelvin >= min_kelvin);
             assert(state.kelvin <= max_kelvin);
-            assert(state.power == 0 or state.power == max_u16);
+            // Power gradually increases during state change
+            // assert(state.power == 0 or state.power == max_u16);
             self.hue = state.hue;
             self.saturation = state.saturation;
             self.brightness = state.brightness;
@@ -178,13 +180,13 @@ pub fn callback(self: *Self, allocator: Allocator, packet: *Packet) !void {
             print("UNKNOWN:\n{x}\n{any}\n\n", .{ packet.buf, packet.getType() });
         },
     }
-    print("FROM: {any} {s} {s} {x}\n{x}\n\n", .{
-        self.addr,
-        self.getLabel(),
-        @tagName(packet.getType()),
-        self.target,
-        packet.buf,
-    });
+    // print("FROM: {any} {s} {s} {x}\n{x}\n\n", .{
+    //     self.addr,
+    //     self.getLabel(),
+    //     @tagName(packet.getType()),
+    //     self.target,
+    //     packet.buf,
+    // });
 }
 
 pub fn create(self: *Self, allocator: Allocator, packet_type: Packet.Type) !*Packet {
@@ -208,32 +210,29 @@ pub fn create(self: *Self, allocator: Allocator, packet_type: Packet.Type) !*Pac
 /// Send UDP packet to device
 pub fn send(self: *Self, socket: Socket, buf: []const u8) !void {
     const sent = try std.posix.sendto(socket, buf, 0, &self.addr.any, self.addr.getOsSockLen());
-    print("TO: {any}\n{x}\n\n", .{ self.addr, buf });
+    // print("TO: {any}\n{x}\n\n", .{ self.addr, buf });
     assert(sent == buf.len);
 }
 
 /// Request state update
-pub fn getState(self: *Self, allocator: Allocator, socket: Socket) !void {
+pub fn requestState(self: *Self, allocator: Allocator, socket: Socket) !void {
     const packet = try self.create(allocator, .light_get);
     try self.send(socket, packet.buf);
 }
 
 /// Request power update
-pub fn getPower(self: *Self, allocator: Allocator, socket: Socket) !void {
+pub fn requestPower(self: *Self, allocator: Allocator, socket: Socket) !void {
     const packet = try self.create(allocator, .light_get_power);
     try self.send(socket, packet.buf);
 }
 
 /// Toggle power on or off
-pub fn setPower(self: *Self, allocator: Allocator, socket: Socket, power: bool) !void {
-    const packet = try self.create(allocator, .light_set_power);
+pub fn setPower(self: *Self, power: bool) void {
     self.power = power;
-    var payload = SetPower{
-        .level = if (power) max_u16 else 0,
-    };
-    const buf = try std.mem.concat(allocator, u8, &.{ packet.buf, std.mem.asBytes(&payload) });
-    defer allocator.free(buf);
-    try self.send(socket, buf);
+}
+
+pub fn getPower(self: *Self) bool {
+    return self.power;
 }
 
 /// Hue between 0° and 360°
@@ -288,8 +287,19 @@ pub fn setHSBK(self: *Self, h: u16, s: u8, b: u8, k: u16) Error!void {
     try self.setKelvin(k);
 }
 
-/// Change colour profile
-pub fn setColor(self: *Self, allocator: Allocator, socket: Socket) !void {
+/// Send power level payload
+pub fn sendPower(self: *Self, allocator: Allocator, socket: Socket) !void {
+    const packet = try self.create(allocator, .light_set_power);
+    var payload = SetPower{
+        .level = if (self.power) max_u16 else 0,
+    };
+    const buf = try std.mem.concat(allocator, u8, &.{ packet.buf, std.mem.asBytes(&payload) });
+    defer allocator.free(buf);
+    try self.send(socket, buf);
+}
+
+/// Send colour profile payload
+pub fn sendHSBK(self: *Self, allocator: Allocator, socket: Socket) !void {
     const packet = try self.create(allocator, .light_set_color);
     var payload = SetColor{
         .hue = self.hue,
@@ -305,6 +315,7 @@ pub fn setColor(self: *Self, allocator: Allocator, socket: Socket) !void {
 pub fn toJson(self: *Self, buf: []u8) ![]u8 {
     const fmt =
         \\ {{
+        \\   "label": "{s}",
         \\   "hue": {d},
         \\   "saturation": {d},
         \\   "brightness": {d},
@@ -313,11 +324,12 @@ pub fn toJson(self: *Self, buf: []u8) ![]u8 {
         \\ }}
     ;
     return try std.fmt.bufPrint(buf, fmt, .{
+        self.getLabel(),
         self.getHue(),
         self.getSaturation(),
         self.getBrightness(),
         self.getKelvin(),
-        self.power,
+        self.getPower(),
     });
 }
 
