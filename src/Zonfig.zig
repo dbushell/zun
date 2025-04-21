@@ -7,7 +7,7 @@ const Self = @This();
 lights: []struct {
     label: []const u8,
     addr: []const u8,
-    mac: []const u8,
+    // mac: []const u8,
 },
 
 /// Read zon config file from home directory
@@ -25,6 +25,9 @@ pub fn init(allocator: Allocator) !Self {
         allocator,
         conf[0..read :0],
         null,
-        .{ .free_on_error = true },
+        .{
+            .free_on_error = true,
+            .ignore_unknown_fields = true,
+        },
     );
 }
