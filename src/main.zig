@@ -63,6 +63,8 @@ pub fn main() !void {
     const addr = try Address.parseIp("0.0.0.0", 56700);
     try posix.bind(socket, &addr.any, addr.getOsSockLen());
 
+    std.debug.print("☀️ {any}\n", .{addr});
+
     // Setup threads
     const poll_thread = try std.Thread.spawn(.{}, poll, .{ &lights, allocator, socket });
     defer poll_thread.join();
